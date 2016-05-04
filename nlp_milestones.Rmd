@@ -1,0 +1,338 @@
+---
+title: "Natual Language - Predictive Modeling"
+date: "`r format(Sys.time(), ' %B %d, %Y')`"
+output: html_document
+---
+
+###Overview
+Typing is a common practice for inputing information into an electronic gadget.  Companies like SwiftKey are enhancing the interaction between people and technology by creating intuitive and personalized keyboard software to predict the next word or phrase.  [Data](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip) from twitter, news and blogs was accessed and explored during this processing of creating a predictive model that reduces the keystrokes required for the entry of common words and phrases into an electronic gadget.
+
+```{r, echo=F, message=FALSE, warning=FALSE, cache = FALSE, results="hide"}
+library(RWeka)
+library(tm)
+library(wordcloud)
+library(RColorBrewer)
+library(ggplot2)
+```
+
+###Exploring the Data
+
+The data that was used to create the model can be found on the web at https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip
+
+```{r, echo=F, message=FALSE, warning=FALSE, cache = FALSE, results="hide"}
+if (!dir.exists("data")) { dir.create("data")}
+if (!dir.exists("data/sample")) { dir.create("data/sample")}
+
+fileUrl <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+filename <- basename(fileUrl)
+
+if (!file.exists(paste0("data/", filename))) {
+        setInternet2(use = TRUE)
+        download.file(fileUrl, destfile = paste0("data/", filename))  
+        dateDownloaded <- date()
+        write(dateDownloaded, file = "data/dateDownloaded.txt")
+        zip_ls = unzip(paste0("data/", filename), list=TRUE)
+        unzip (paste0("data/", filename), files = zip_ls[11:13,1], junkpaths = FALSE, exdir = "./data")
+}
+
+twitter <- "en_US.twitter.txt"
+news <- "en_US.news.txt"
+blog <- "en_US.blogs.txt"
+rm(fileUrl)
+```
+
+- **View Raw Data**
+
+The raw data as a single Corpus object in R was over 573 megabytes.  You will see a table for the number of lines per file source and the maximum characters in a line.  
+
+```{r, echo=F, message=FALSE, warning=FALSE, cache = TRUE, results="markup"}
+#calculates the number of lines and maximum character line length of each corpus
+get_corpus_size <- function(corpus) {
+        no_lines <- NULL
+        max_chars <- NULL
+        rn <- NULL
+        for (i in 1:length(corpus)) {
+                no_lines <- rbind(no_lines, length(corpus[[i]]$content))
+                max_chars <- rbind(max_chars, max(nchar(corpus[[i]]$content)))
+                rn <- rbind(rn, corpus[[i]]$meta$id)
+        }
+        corpus_stats <- as.data.frame(cbind(no_lines, max_chars))
+        colnames(corpus_stats) <- c("Lines","Max_Char")
+        rownames(corpus_stats) <- rn
+        corpus_stats
+}
+
+full_corpus <- Corpus(DirSource("data/final/en_US"), readerControl = list(language="UTF-8"))
+get_corpus_size(full_corpus)
+rm(full_corpus)
+```
+
+The size of the files were two large to analyze words.  To find the most popular words, a random selection of one in every one hundred lines were selected using the rbinom function and the random seed set to 42. The resulting corpus was only 1.4 megabytes.
+
+```{r, echo=FALSE, eval=FALSE, comment=NA, results="hide"}
+###functions used to create sample data that would not Knit
+#counts the number of lines in a text file
+no_of_lines <- function(con_text){
+        readsizeof <- 20000
+        no_lines <- 0
+        con <- file(paste0("data/final/en_US/", con_text), "r")
+        ( while((linesread <- length(readLines(con ,readsizeof))) > 0 )
+                no_lines <- no_lines+linesread )
+        closeAllConnections() 
+        no_lines
+}
+
+#writes sample of text file lines to data for training
+write_training_text <- function(writefile){
+        size <- no_of_lines(writefile)
+        samplelines <- 4999
+        samplelines <- if (size < 5000) {size * 0.4} else samplelines
+        rlines <- rbinom(samplelines, size, .5)
+        con <- file(paste0("data/final/en_US/", writefile), "r")
+        wlines <- readLines(con, encoding = "UTF-8")[rlines]
+        closeAllConnections()
+        write.csv(wlines, file = paste0("data/sample/", basename(writefile)), row.names = FALSE)
+        closeAllConnections()
+}
+
+set.seed(42)  #for reproducibility
+
+#write sample data to disk
+write_training_text(twitter)
+write_training_text(news)
+write_training_text(blog)
+
+rm(filename, no_of_lines, write_training_text, blog, news, twitter, .Random.seed)
+```
+
+- **Cleanse Data**
+
+Before finding the most common words, the data is cleansed of undesired words as well as non-words like numbers, websites and emails.  All extra white space and puncuation is also removed but not before converting contractions to their respective words.  Frontmedia provided a list of undesired words from their site called  [Terms-to-Block.csv](http://www.frontgatemedia.com/a-list-of-723-bad-words-to-blacklist-and-how-to-use-facebooks-moderation-tool/).  You will see a table for the sample data below.  
+
+```{r, echo=F, message=FALSE, warning=FALSE, cache = FALSE, results="markup"}
+sample_corpus <- Corpus(DirSource("data/sample"), readerControl = list(language="UTF-8"))
+get_corpus_size(sample_corpus)
+rm(get_corpus_size)
+```
+
+Here is the detail code for cleansing the data:
+
+```{r, echo=F, message=FALSE, warning=FALSE, cache = FALSE, results="hide"}
+#Removed extra whitespace
+sample_corpus <- tm_map(sample_corpus, stripWhitespace)
+
+#Transformed all characters to lowercase
+sample_corpus <- tm_map(sample_corpus, content_transformer(tolower))
+
+#Remove undesired words
+profanity <- read.delim("data/Terms-to-Block.csv", skip = 4, header=FALSE, stringsAsFactors=FALSE, sep = ',', fill = TRUE)
+profanity <- profanity[,2]
+profanity <- gsub(",$","",profanity)
+sample_corpus <- tm_map(sample_corpus, removeWords, profanity)
+
+#Remove select non words like websites & emails
+nonwords <- c("\\bhttp(\\S*)\\b" ,"\\b(\\S*)?\\.com\\b", "\\b(\\S*)?\\.gov\\b", "\\b(\\S*)?\\.org\\b", "\\b(\\S*)?\\.net\\b", "\\b(\\S*)?\\.tv\\b") 
+sample_corpus <- tm_map(sample_corpus, removeWords, nonwords)
+
+#Update word contractions and anything that is not a letter, number or space
+contractions <-
+        data.frame(
+        rplmnt = c("s", " is", " am", "an not", " not", " will", " are", " would", " have",""),
+        ptrn = c("s[^a-z0-9\\s]s", "\\b[^a-z0-9\\s]s\\b", "\\b[^a-z0-9\\s]m\\b", "an[^a-z0-9\\s]t", 
+                 "n[^a-z0-9\\s]t", "\\b[^a-z0-9\\s]ll\\b", "\\b[^a-z0-9\\s]re\\b", "\\b[^a-z0-9\\s]d\\b",
+                 "\\b[^a-z0-9\\s]ve\\b", "[^a-z\\s]"), stringsAsFactors = FALSE
+                    ) 
+
+for (j in 1:length(sample_corpus)) {
+        for (i in 1:nrow(contractions)) {
+        sample_corpus[[j]]$content <-
+        gsub(contractions[i,2], contractions[i,1], sample_corpus[[j]]$content, perl = TRUE)
+        }
+        }
+        
+#Remove Numbers
+sample_corpus <- tm_map(sample_corpus, removeNumbers)
+
+#Remove Punctuation
+sample_corpus<- tm_map(sample_corpus, removePunctuation)
+
+#Remove whitespace and profanity again
+sample_corpus <- tm_map(sample_corpus, removeWords, profanity)
+sample_corpus <- tm_map(sample_corpus, stripWhitespace)
+
+#Remove stopwords and stemming
+sample_corpus_s <- tm_map(sample_corpus, removeWords, stopwords('english'))
+sample_corpus_ss <- tm_map(sample_corpus_s, stemDocument, language = "english")  
+rm(i,j, contractions, nonwords, profanity)
+```
+
+```{r, echo=T, message=FALSE, eval=FALSE, warning=FALSE, cache = FALSE, results="markup"}
+#Removed extra whitespace
+sample_corpus <- tm_map(sample_corpus, stripWhitespace)
+
+#Transformed all characters to lowercase
+sample_corpus <- tm_map(sample_corpus, content_transformer(tolower))
+
+#Remove undesired words
+profanity <- read.delim("data/Terms-to-Block.csv", skip = 4, header=FALSE, stringsAsFactors=FALSE, sep = ',', fill = TRUE)
+sample_corpus <- tm_map(sample_corpus, removeWords, profanity)
+
+#Remove select non words like websites & emails
+nonwords <- c("\\bhttp(\\S*)\\b" ,"\\b(\\S*)?\\.com\\b") 
+sample_corpus <- tm_map(sample_corpus, removeWords, nonwords)
+
+#Update word contractions and anything that is not a letter, number or space
+contractions <- data.frame(rplmnt = c("s", " is", " am", "an not"), ptrn = c("s[^a-z0-9\\s]s", "\\b[^a-z0-9\\s]s\\b", "\\b[^a-z0-9\\s]m\\b", "an[^a-z0-9\\s]t")) 
+
+for (j in 1:length(sample_corpus)) {
+        for (i in 1:nrow(contractions)) {
+        sample_corpus[[j]]$content <-
+        gsub(contractions[i,2], contractions[i,1], sample_corpus[[j]]$content, perl = TRUE)
+        }
+        }
+        
+#Remove Numbers
+sample_corpus <- tm_map(sample_corpus, removeNumbers)
+
+#Remove Punctuation
+sample_corpus<- tm_map(sample_corpus, removePunctuation)
+
+#Remove whitespace and profanity again
+sample_corpus <- tm_map(sample_corpus, removeWords, profanity)
+sample_corpus <- tm_map(sample_corpus, stripWhitespace)
+
+#Remove stopwords and stemming
+sample_corpus_s <- tm_map(sample_corpus, removeWords, stopwords('english'))
+sample_corpus_ss <- tm_map(sample_corpus_s, stemDocument, language = "english")  
+```
+
+Graph of most frequently used words as well as a word bubble with basic word stems without common (stopwords) words.
+
+```{r, echo=F, message=FALSE, warning=FALSE, cache = FALSE, results="markup", fig.width=4.5, fig.height=4.5}
+#function to convert dtm to dataframe
+convert_dtm_df <- function(doc_term_matrix) {
+        dtms <- as.data.frame(sort(colSums(as.matrix(doc_term_matrix)), decreasing = TRUE))
+        colnames(dtms) <- c("Frequency")
+        dtms$Word <- rownames(dtms)
+        rownames(dtms) <- NULL
+        dtms$Word_Length <- nchar(dtms$Word, type = "chars", allowNA = TRUE, keepNA = 0)
+        dtms
+        }
+        
+#document matrix of most used words
+dtm <- DocumentTermMatrix(sample_corpus)
+dtms <- convert_dtm_df(dtm)
+
+barplot(dtms[1:15, 1], horiz=TRUE, space = 0.4, las = 2, names.arg = dtms[1:15, 2], col ="lightblue", main ="Most frequent words", xlab = "")
+
+#document matrix of with stopwords and stemming
+dtm_ss <- DocumentTermMatrix(sample_corpus_ss)
+dtms_ss <- convert_dtm_df(dtm_ss)
+
+pal <- brewer.pal(8,"Dark2")
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "Top 100 Main Words")
+wordcloud(dtms_ss[1:100,2], dtms_ss[1:100,1], colors = pal, random.order = FALSE, random.color = TRUE, ordered.colors = FALSE)
+rm(pal, dtm, dtm_ss)
+```
+
+- **Unique Words**
+
+The following graphs shows that the number of unique words in the sample is 17,386.  90 percent of the total words is made up of only 5807 unique words and 50 percent of all words is only 227 unique words.  After removing stop words (or common words) and focusing on the top 3 quantiles of words, the list of unique words shrinks to 4368 with 2773 of these making up 90 percent of the total. 
+
+```{r, echo=F, message=FALSE, warning=FALSE, cache = FALSE, results="markup", fig.width=4.2, fig.height=4}
+#function to calculate unique words
+uniqueWords <- function(freqVector, prob){
+  num = 0
+  totalWords = sum(freqVector)
+  while(sum(freqVector[1:num])/totalWords < prob) num = num + 1    
+  return(num)
+}
+
+plot_coverage <- function(coverage){
+# Number of unique words to cover 50%
+xi50 <- coverage[coverage$rate == 0.5,"wordNum"]
+
+# Number of unique words to cover 90%
+xi90 <- coverage[coverage$rate == 0.9,"wordNum"]
+
+xi100 <- coverage[coverage$rate == 1,"wordNum"]
+
+xbreaks <- seq(0, xi100, by=round(xi100/4, digits = -3))
+xbreaks <- sort(append(xbreaks, c(xi50, xi90, xi100)), decreasing = FALSE)
+
+cover_plot <- ggplot(coverage, aes(wordNum, rate)) +
+        geom_line(linetype = 'solid', size=1) +
+        scale_x_continuous(breaks = xbreaks) +
+        theme(axis.text.x = element_text(angle = 75, vjust = 0.7, hjust=1)) +
+        scale_y_continuous(breaks = seq(0, 1, 0.1)) +
+        geom_vline(xintercept = xi50, col = 'blue', linetype = 'longdash') +
+        geom_vline(xintercept = xi90, col = 'blue', linetype = 'longdash')
+}
+
+coverage <- data.frame(rate = seq(0, 1, 0.05), wordNum = sapply(seq(0, 1, 0.05), 
+                                        function(x) uniqueWords(dtms$Frequency, x)))
+
+coverage_plot <- plot_coverage(coverage)
+
+coverage_plot + ggtitle('Total coverage by Number of Unique Terms for ALL Terms') +
+        theme(plot.title = element_text(lineheight = 1, size = 9, face = 'bold')) +
+        labs(x = '\nNumber of Unique Terms', y = 'Percent Share of Total Coverage\n')
+
+
+dtm_s <- DocumentTermMatrix(sample_corpus_s)
+dtms_s <- convert_dtm_df(dtm_s)
+top_words <- dtms_s[dtms_s$Frequency > quantile(dtms_s$Frequency)[[4]]-1,]
+
+coverage_top <- data.frame(rate = seq(0, 1, 0.05), wordNum = sapply(seq(0, 1, 0.05), 
+                                        function(x) uniqueWords(top_words$Frequency, x)))
+
+coverage_plot_top <- plot_coverage(coverage_top)
+
+coverage_plot_top + ggtitle('Total coverage for Top Words without Stopwords') +
+        theme(plot.title = element_text(lineheight = 1, size = 9, face = 'bold')) +
+        labs(x = '\nNumber of Unique Terms', y = '')
+rm(coverage, coverage_top, top_words, coverage_plot, dtms_s, sample_corpus_s, sample_corpus_ss, dtm_s, dtms_ss, coverage_plot_top, plot_coverage, uniqueWords, convert_dtm_df)
+```
+
+- **Bigrams and Trigrams**
+
+In addition to viewing top words, it becomes important to predict common phrases.  Here are the top 2 and 3 word phrases.
+
+```{r, echo=F, message=FALSE, warning=FALSE, cache = FALSE, results="markup", fig.width=4.2, fig.height=4}
+corpus_to_ngram <- function(corpus, ngram) {
+        corpus_ngram <- NGramTokenizer(corpus, Weka_control(min = ngram, max = ngram))
+        xgram <- data.frame(table(corpus_ngram))
+        colnames(xgram) <- c("nGram","Freq")
+        xgram <- xgram[order(xgram$Freq, decreasing = TRUE),]
+        rownames(xgram) <- NULL
+        xgram
+}
+
+bigram <- corpus_to_ngram(sample_corpus, 2)
+trigram <- corpus_to_ngram(sample_corpus, 3)
+
+barplot(bigram[1:15,2], horiz=TRUE, space = 0.4, cex.axis=0.7, cex.names=0.5, col = "lightblue", names.arg = bigram[1:15,1], border=NA, las=2, main="Top 15 Most Frequent BiGrams", cex.main=1.5)
+
+barplot(trigram[1:15,2], horiz=TRUE, space = 0.4, cex.axis=0.7, cex.names=0.5, col = "lightblue", names.arg = trigram[1:15,1], border=NA, las=2, main="Top 15 Most Frequent TriGrams", cex.main=1.5)
+rm(bigram, trigram, sample_corpus, corpus_to_ngram)
+```
+
+###Findings
+
+The exploration of the data presented many challenges that were addressed and may need further consideration.  There are a lot of very long words.  Many of these were websites and emails that were removed.  Others are likely to be hashtags or foreign words.  I considered matching these words to an english dictionary.  
+
+I found it interesting that the most common two word phrases were not part of the most common three word phrases. In addition, I noted that very few unique words make up the majority of the total number of words.
+
+###Further Plans
+
+I hope to find a reasonable method to deal with foreign words by finding a dictionary to compare.  I may look at the ability to predict the english counterpart of the foreign word.  I plan to address the really long words by limiting my prediction to words that are more frequently used.
+
+Twitter had the most lines and may receive to high of a weighting in the guessing of the next word.  I will look into separate models base on just Twitter or limit the weighting the Twitter has when creating my model.
+
+By making a few of the updates above, I hope to create a more efficient method for tokenization.  I will also consider building several very small training/test sets.
+
+Another step is to select a prediction model and create a shiny app. I hope to predict more than one word. For example, if the user typed “Like”, then my app could show "you"  "to be"  and "one of the" as a choice for the next phrase.  I plan to highlight the most likely word or phrase.  Also, I hope to predict words based on the previous three words by using 4 word phrases in my modeling.
+

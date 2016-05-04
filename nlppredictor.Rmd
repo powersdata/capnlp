@@ -1,0 +1,58 @@
+---
+title: "nlppredictor"
+author: "Ted Powers"
+date: "March 26, 2016"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+require(tau)
+
+queryHistoryTab <- c("Can of beer" = 3, "can of Soda" = 2, "A can of water" = 1, "Buy me a can of soda, please" = 2)
+queryHistoryTab <- trigram
+query <- "can of"
+n <- 2
+idx <- which(substr(trigram$nGram, 0, nchar(query)) == query)
+res <- head(names(sort(trigram[idx,1], decreasing = TRUE)), n)
+
+tst <- length(scan(text = query, what = "character", quiet = TRUE))+1
+
+trigrams <- textcnt(queryHistoryTab$nGram, method = "string", tst)
+
+```
+
+You can also embed plots, for example:
+
+```{r, echo=FALSE}
+f <- function(queryHistoryTab, query, n = 2) {
+  require(tau)
+  trigrams <- sort(textcnt(rep(tolower(names(queryHistoryTab)), queryHistoryTab), method = "string", n = length(scan(text = query, what = "character", quiet = TRUE)) + 1))
+  query <- tolower(query)
+  idx <- which(substr(names(trigrams), 0, nchar(query)) == query)
+  res <- head(names(sort(trigrams[idx], decreasing = TRUE)), n)
+  res <- substr(res, nchar(query) + 2, nchar(res))
+  return(res)
+}
+f(c("Can of beer" = 3, "can of Soda" = 2, "A can of water" = 1, "Buy me a can of soda, please" = 2), "i do ")
+# [1] "soda" "beer"
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r, echo=F, message=FALSE, warning=FALSE, cache = FALSE, results="markup", fig.width=4.2, fig.height=4}
+#find text
+query <- "can of soda"
+#compare to quadrigram
+idx <- grepl(query, quadgram$nGram, ignore.case = TRUE)
+
+#sort quad based on text and frequency
+xgram <- quadgram[idx,]
+xgram <- xgram[order(xgram$Freq, decreasing = TRUE),]
+head(xgram, 10)
+
+
+
+```

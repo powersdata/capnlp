@@ -1,0 +1,424 @@
+---
+title: "Natual Language Processing (NLP) - Capstone Project"
+author: "Ted Powers"
+date: "March 9, 2016"
+output: html_document
+---
+###Overview
+Predict the next word using data from twitter, news and blogs.  Data for this project comes from: https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip
+
+###Tasks to accomplish
+
+- Obtaining the data - Can you download the data and load/manipulate it in R?
+- Familiarizing yourself with NLP and text mining - Learn about the basics of natural language processing and how it relates to the data science process you have learned in the Data Science Specialization.
+- Tokenization - identifying appropriate tokens such as words, punctuation, and numbers. Writing a function that takes a file as input and returns a tokenized version of it.
+- Profanity filtering - removing profanity and other words you do not want to predict.
+
+###Questions to consider
+
+- What do the data look like?
+- Where do the data come from?
+- Can you think of any other data sources that might help you in this project?
+- What are the common steps in natural language processing?
+- What are some common issues in the analysis of text data?
+- What is the relationship between NLP and the concepts you have learned in the Specialization?
+
+###Tasks to accomplish
+
+**Exploratory analysis** - perform a thorough exploratory analysis of the data, understanding the distribution of words and relationship between the words in the corpora.
+
+**Understand frequencies** of words and word pairs - build figures and tables to understand variation in the frequencies of words and word pairs in the data.
+
+**Build basic n-gram model** - using the exploratory analysis you performed, build a basic n-gram model for predicting the next word based on the previous 1, 2, or 3 words.
+
+**Build a model to handle unseen n-grams** - in some cases people will want to type a combination of words that does not appear in the corpora. Build a model to handle cases where a particular n-gram isn't observed.
+
+###Questions to consider
+
+- Some words are more frequent than others - what are the distributions of word frequencies?
+- What are the frequencies of 2-grams and 3-grams in the dataset?
+- How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%?
+- How do you evaluate how many of the words come from foreign languages?
+- Can you think of a way to increase the coverage -- identifying words that may not be in the corpora or using a smaller number of words in the dictionary to cover the same number of phrases?
+
+- How can you efficiently store an n-gram model (think Markov Chains)?
+- How can you use the knowledge about word frequencies to make your model smaller and more efficient?
+- How many parameters do you need (i.e. how big is n in your n-gram model)?
+- Can you think of simple ways to "smooth" the probabilities (think about giving all n-grams a non-zero probability even if they aren't observed in the data) ?
+- How do you evaluate whether your model is any good?
+- How can you use backoff models to estimate the probability of unobserved n-grams?
+
+object.size()
+object.size(wordcloud)
+?Rprof()
+gc()
+
+```{r}
+#Sys.setenv(JAVA_HOME='C:\\Program Files\\Java\\jre1.8.0_73\\bin\\java.dll') # for 64-bit version
+#Sys.setenv(JAVA_HOME='C:\\Program Files (x86)\\Java\\jre7') # for 32-bit version
+
+library(RWeka)
+#library(wordnet)
+library(tm)
+library(wordcloud)
+#Llibrary(Hmisc)
+#library(knitr)
+#library(zipfR)
+#library(SnowballC)
+#library(R.utils)
+library(RColorBrewer)
+library(ggplot2)
+```
+
+###Data
+```{r}
+fileUrl <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+filename <- basename(fileUrl)
+
+if (!file.exists(filename)) {
+        setInternet2(use = TRUE)
+        download.file(fileUrl, destfile = filename)  
+        dateDownloaded <- date()
+        write(dateDownloaded, file = "dateDownloaded.txt")
+        print(dateDownloaded)
+        zip_ls = unzip(filename, list=TRUE)
+        unzip (filename, files = zip_ls[11:13,1], junkpaths = TRUE)
+}
+
+twitter <- "en_US.twitter.txt"
+news <- "en_US.news.txt"
+blog <- "en_US.blogs.txt"
+rm(fileUrl)
+```
+
+###functions used to create sample data that would not Knit
+```{r, echo=TRUE, eval=FALSE, comment=NA}
+#counts the number of lines in a text file
+nooflines <- function(con_text){
+        readsizeof <- 20000
+        nolines <- 0
+        con <- file(con_text, "r")
+        ( while((linesread <- length(readLines(con ,readsizeof))) > 0 )
+                nolines <- nolines+linesread )
+        closeAllConnections() 
+        nolines
+}
+
+#writes sample of text file lines to data for training
+write_training_text <- function(writefile){
+        nolines <- nooflines(writefile)
+        rlines <- rbinom(nolines*.01, nolines, .6)
+        con <- file(writefile, "r")
+        wlines <- readLines(con, encoding = "UTF-8")[rlines]
+        closeAllConnections()
+        write.csv(wlines, file = paste0("data/", basename(writefile)), row.names = FALSE)
+        closeAllConnections()
+}
+
+set.seed(42)  #for reproducibility
+
+#Call function
+if (!dir.exists("data")) { dir.create("data")}
+write_training_text(twitter)
+write_training_text(news)
+write_training_text(blog)
+
+
+getCorpusSize <- function(corpus){
+  
+  size <- as.data.frame(sapply(corpus, function(x) length(x$content)))
+  names(size) <- "length"
+  return(size)
+}
+full_corpus <- Corpus(DirSource("en_US/"), readerControl = list(language="UTF-8"))
+size <- getCorpusSize(full_corpus)
+size
+
+rm(nooflines, write_training_text, filename, blog, news, twitter, .Random.seed)
+```
+
+###View Raw Data
+
+```{r}
+atext <- Corpus(DirSource("data/"), readerControl = list(language="en_US"))
+summary(atext)
+no_Lines <- NULL
+max_Chars <- NULL
+rn <- NULL
+for (i in 1:3) {
+        no_Lines <- rbind(no_Lines, length(atext[[i]]$content))
+        max_Chars <- rbind(max_Chars, max(nchar(atext[[i]]$content)))
+        rn <- rbind(rn, atext[[i]]$meta$id)
+        }
+sample_stats <- as.data.frame(cbind(no_Lines, max_Chars))
+colnames(sample_stats) <- c("Lines","Max_Char")
+rownames(sample_stats) <- rn
+sample_stats
+
+# atext[[1]]$content[223]
+# atext[[1]]$content[366]
+# atext[[1]]$content[742]
+atext[[3]]$content[8727]
+
+lovetweet<-grep("udf", stext[[3]]$content)
+lovetweet
+# lovetweet<-grep("\\b[^a-z\\s]\\b", atext[[1]]$content)
+# lovetweet<-grep(" http(.*?) ",atext[[1]]$content)
+# lovetweet2<-grep("n[^a-z0-9\\s]t", atext[[1]]$content)
+# lovetweet2<-grep("s\\'s", (atext[[2]]$content))
+# lovetweet<-as.character(atext[[1]]$content[366])
+# lovetweet<-grep("you\\’ll", "all, you’ll find it very well")
+# lovetweet2<-grep("you[:punct:]ll",lovetweet, perl = TRUE)
+# lovetweet2
+# gsub("\\b(\\w+(.*)?\\.com$", "1", "a test of two.com capitalizing", perl=TRUE)
+# gsub("\\b(\\S*)?\\.com\\b", "2", "a tests of two.com capitalizing", perl=TRUE)
+# gsub("(%a)([%w_']*)", "2", "a http://www.tests.com of two.com capitalizing", perl=TRUE)
+# gsub("^http://(?:www[.])?([^/]*).*$", "2", "a http://www.tests.com of two.com capitalizing", perl=TRUE)
+# gsub("", "2", "a test of two.com capitalizing")
+# gsub("%w+\\.com", "2", "a http://www.tests.com of two.com capitalizing", perl=TRUE)
+# gsub("\\b(\\S*)?\\.com\\b", "2", "a http://www.tests.com of two.com capitalizing", perl=TRUE)
+
+# gsub("[^a-z\\s]", "", atext[[1]]$content, perl = TRUE)
+# gsub("\\b[^a-z0-9\\s]s\\b", " is", atext[[1]]$content[366], perl = TRUE)
+# gsub("\’", " will", atext[[1]]$content[366], perl = TRUE)
+# gsub("\\bs[^a-z0-9\\s]s\\b", " will", atext[[2]]$content[14], perl = TRUE)
+# gsub("\\bs[a-z0-9\\S]s\\b", " s", atext[[2]]$content[14], perl = TRUE)
+# gsub("s[^a-z0-9\\s]s", "s", atext[[2]]$content[14], perl = TRUE)
+# gsub("s[^a-z0-9\\s]s", "s", "peoples's taste ins sfood had", perl = TRUE)
+#iconv(atext[[1]]$content[366], "ASCII", "UTF-8")
+
+#gsub("[[:blank:]]+$", "", "a http://www.tests.com of two.com about communicate?,â€™ posted november . if youâ€™re in", perl=TRUE)
+
+#gsub("\\s", "", "a http://www.tests.com of two.com about communicate?,â€™ posted november . if youâ€™re in", perl=TRUE)
+
+rm(sample_stats, max_Chars, no_Lines, i, rn)
+```
+
+###Cleanse Data
+Frontmedia provided a list of undesired words from their site called  [Terms-to-Block.csv](http://www.frontgatemedia.com/a-list-of-723-bad-words-to-blacklist-and-how-to-use-facebooks-moderation-tool/)
+```{r}
+# atext <- Corpus(DirSource("data/"), readerControl = list(language="en_US"))
+#Removed extra whitespace
+atext <- tm_map(atext, stripWhitespace)
+
+#Transformed all characters to lowercase
+atext <- tm_map(atext, content_transformer(tolower))
+
+#Remove undesired words
+profanity <- read.delim("Terms-to-Block.csv", skip = 4, header=FALSE, stringsAsFactors=FALSE,
+                        sep = ',', fill = TRUE)
+profanity <- profanity[,2]
+profanity <- gsub(",$","",profanity)
+atext <- tm_map(atext, removeWords, profanity)
+
+#Remove select non words like websites & emails
+nonwords <- c("\\bhttp(\\S*)\\b" ,"\\b(\\S*)?\\.com\\b", "\\b(\\S*)?\\.gov\\b", "\\b(\\S*)?\\.org\\b", "\\b(\\S*)?\\.net\\b", "\\b(\\S*)?\\.tv\\b") 
+atext <- tm_map(atext, removeWords, nonwords)
+
+# atext[[1]]$content[366]
+# atext[[1]]$content[742]
+# atext[[1]]$content[7]
+
+#Update word contractions and anything that is not a letter, number or space
+contractions <- data.frame(rplmnt=c("s", " is", " am", "an not", " not", " will", " are", " would", " have",""), 
+                           ptrn=c("s[^a-z0-9\\s]s", "\\b[^a-z0-9\\s]s\\b", "\\b[^a-z0-9\\s]m\\b", "an[^a-z0-9\\s]t", "n[^a-z0-9\\s]t", "\\b[^a-z0-9\\s]ll\\b", "\\b[^a-z0-9\\s]re\\b", "\\b[^a-z0-9\\s]d\\b", "\\b[^a-z0-9\\s]ve\\b", "[^a-z\\s]"), 
+                           stringsAsFactors = FALSE) 
+
+for (j in 1:length(atext)){
+        for (i in 1:nrow(contractions)) {
+                atext[[j]]$content<-gsub(contractions[i,2], contractions[i,1], atext[[j]]$content, perl = TRUE)
+        }
+}
+
+# atext[[1]]$content[223]
+# atext[[1]]$content[366]
+# atext[[1]]$content[813]
+
+#Remove Numbers
+atext <- tm_map(atext, removeNumbers)
+
+#Remove Punctuation
+atext<- tm_map(atext, removePunctuation)
+
+#Remove whitespace and profanity again
+atext <- tm_map(atext, removeWords, profanity)
+atext <- tm_map(atext, stripWhitespace)
+
+#stext <- atext                  #used later for analysis with stopwords
+#atext[[1]]$content[366]
+rm(i,j, contractions, nonwords, profanity)
+```
+
+###Exploratory Analysis
+
+@Word Cloud
+```{r}
+#Remove stopwords
+stext <- tm_map(atext, removeWords, stopwords('english'))
+dtm <- DocumentTermMatrix(stext)
+dtm <- removeSparseTerms(dtm, 0.9)
+dtm2 <- as.matrix(dtm)
+freq <- colSums(dtm2)
+freq <- sort(freq, decreasing = TRUE)
+dword <- names(freq)
+
+freq_top15 <- head(freq, 15)
+barplot(unname(freq_top15), horiz=TRUE, space = 0.4, las = 2, names.arg = names(freq_top15), col ="lightblue", main ="Most frequent words", xlab = "")
+
+barplot(unname(freq_top15), names.arg = names(freq_top15), border=NA, las=2, main="Top 15 Most Frequent Words", cex.main=2)
+pal <- brewer.pal(8,"Dark2")
+wordcloud(dword[1:100], freq[1:100], colors = pal, random.order = FALSE, random.color = TRUE, ordered.colors = FALSE)
+# inspect(dtm2[1])
+# make a Document Term Matrix
+# Generate the frequency of one-gram words (from DocumentTermMatrix)
+dtm <- DocumentTermMatrix(atext)
+#dtm <- DocumentTermMatrix(stext)
+
+dtm3 <- dtm[,findFreqTerms(x = dtm, lowfreq=1000, highfreq=Inf)]
+dtm3 <- as.matrix(dtm)
+dtm3 <- as.matrix(dtm3)
+freq3 <- colSums(dtm3)
+freq3 <- sort(freq3, decreasing = TRUE)
+freq3 <- as.data.frame(freq3)
+freq3$word <- rownames(freq3)
+colnames(freq3)<- c("Frequency", "Word")
+rownames(freq3)<- NULL
+freq3$Word_Length <- nchar(freq3$Word, type = "chars", allowNA = TRUE, keepNA = 0)
+
+TopWords <- freq3[freq3$Frequency > quantile(freq3$Frequency)[[4]]-1,]
+#head(freq3[order(-freq3$Word_Length),],50 )
+#freq3[freq3$Word_Length>15,]
+
+uniqueWords <- function(freqVector, prob){
+  num = 0
+  totalWords = sum(freqVector)
+  while(sum(freqVector[1:num])/totalWords < prob) num = num + 1    
+  return(num)
+}
+
+coverage <- data.frame(rate = seq(0, 1, 0.05), wordNum = sapply(seq(0, 1, 0.05), function(x) uniqueWords(TopWords$Frequency, x)))
+
+# Number of unique words to cover 50%
+xi50 <- coverage[coverage$rate == 0.5,"wordNum"]
+
+# Number of unique words to cover 90%
+xi90 <- coverage[coverage$rate == 0.9,"wordNum"]
+
+xi100 <- coverage[coverage$rate == 1,"wordNum"]
+
+xbreaks <- seq(0, xi100+100, by=round(xi100/5, digits = -2))
+xbreaks <- sort(append(xbreaks, c(xi50, xi90)), decreasing = FALSE)
+
+ggplot(coverage, aes(wordNum, rate)) +
+        geom_line(linetype = 'solid', size=1) +
+        scale_x_continuous(breaks = xbreaks) +
+        scale_y_continuous(breaks = seq(0, 1, 0.1)) +
+        geom_vline(xintercept = xi50, col = 'blue', linetype = 'longdash') +
+        geom_vline(xintercept = xi90, col = 'blue', linetype = 'longdash') +
+        ggtitle('Total coverage by Number of Unique Terms') +
+        theme(plot.title = element_text(lineheight = 1, face = 'bold')) +
+        labs(x = 'Number of Unique Terms', y = 'Percent Share of Total Coverage\n')
+
+# get the words appeared at least 1,000 times
+dtm.high <- dtm[,findFreqTerms(x = dtm, lowfreq=1000, highfreq=Inf)]
+# frequency summary
+freqency <- colSums(as.matrix(dtm.high))
+# select the top 100 words that appear most frequently
+topWords <- as.data.frame(freqency[head(order(freqency, decreasing = T), 100)])
+
+#dev.off()
+```
+
+@uniGrams Weka
+```{r}
+Ungram<- NGramTokenizer(atext, Weka_control(min = 1, max = 1))
+freq.Ungram <- data.frame(table(Ungram))
+sort.Ungram <- freq.Ungram[order(freq.Ungram$Freq,decreasing = TRUE),]
+Ungram_top15<-head(sort.Ungram,15)
+barplot(Ungram_top15$Freq, names.arg = Ungram_top15$Ungram, border=NA, las=2, main="Top 15 Most Frequent Ungrams", cex.main=2)
+```
+
+
+@BiGrams Weka
+```{r}
+Bigram<- NGramTokenizer(atext, Weka_control(min = 2, max = 2))
+freq.Bigram <- data.frame(table(Bigram))
+sort.Bigram <- freq.Bigram[order(freq.Bigram$Freq,decreasing = TRUE),]
+Bigram_top10<-head(sort.Bigram,10)
+barplot(Bigram_top10$Freq, names.arg = Bigram_top10$Bigram, border=NA, las=2, main="Top 10 Most Frequent BiGrams", cex.main=2)
+```
+
+@TriGrams Weka
+```{r}
+Trgram<- NGramTokenizer(atext, Weka_control(min = 3, max = 3))
+freq.Trgram <- data.frame(table(Trgram))
+sort.Trgram <- freq.Trgram[order(freq.Trgram$Freq,decreasing = TRUE),]
+Trgram_top15<-head(sort.Trgram,15)
+barplot(Trgram_top15$Freq, names.arg = Trgram_top15$Trgram, border=NA, las=2, main="Top 15 Most Frequent Trgrams", cex.main=1.5, cex.names=0.7)
+```
+
+@QuGrams Weka
+```{r}
+Qugram<- NGramTokenizer(atext, Weka_control(min = 4, max = 4))
+freq.Qugram <- data.frame(table(Qugram))
+sort.Qugram <- freq.Qugram[order(freq.Qugram$Freq,decreasing = TRUE),]
+Qugram_top15<-head(sort.Qugram,15)
+barplot(Qugram_top15$Freq, names.arg = Qugram_top15$Qugram, border=NA, las=2, main="Top 15 Most Frequent Qugrams", cex.main=1.5, cex.names=0.55)
+```
+
+###Term Document Matrix
+```{r}
+# tdm <- DocumentTermMatrix(stext)
+# tdm2 <- as.matrix(tdm)
+# tfreq <- colSums(tdm2)
+# tfreq <- sort(tfreq, decreasing = TRUE)
+# head(tfreq)
+# tword <- names(tfreq)
+# wordcloud(tword[1:100], tfreq[1:100])
+# dev.off()
+# inspect(tdm2[202:205, 1:5])
+```
+
+###Synonyms
+```{r}
+# contractions <- data.frame(expr=c("s\'s", " www\\.* ", "\'s", "\'m", "n\'t", "\'ll", "\'re", "\'d", "\'ve", ", "\^\[a-z\]", "*\\.com") , word=c("s", " ", " is", " am", " not", " will", " are", " would", " have", "", ""), stringsAsFactors = FALSE) 
+# contractions <- data.frame(rplmnt=c("s", " is", " am", " not", " will", " are", " would", " have", ""), 
+#                            ptrn=c("s\\'s", "\\'s", "\\'m", "n\\'t", "\\'ll", "\\'re", "\\'d", "\\'ve", "[^a-zA-Z0-9\\s]"), 
+#                            stringsAsFactors = FALSE) 
+# 
+# 
+# 
+# for (i in 1:3) {
+#         print(paste(atext[[i]]$meta$id, "Lines:", length(atext[[i]]$content)))
+#         print(paste(atext[[i]]$meta$id, "Longest Character String:", max(nchar(atext[[i]]$content))))
+# }
+# 
+# 
+# 
+# contractions <- data.frame(rplmnt=c("s", " is", " am", " not", " will", " are", " would", " have"), 
+#                            ptrn=c("s[^a-z0-9\\s]s", "\\b[^a-z0-9\\s]s\\b", "\\b[^a-z0-9\\s]m\\b", "s[^a-z0-9\\s]t", "\\b[^a-z0-9\\s]ll\\b", "\\b[^a-z0-9\\s]re\\b", "\\b[^a-z0-9\\s]d\\b", "\\b[^a-z0-9\\s]ve\\b"), 
+#                            # stringsAsFactors = FALSE) 
+dev.off()
+```
+Besides the nGrams, I’ve noted the following observations with the data I will need to factor in to my models:
+
+Foreign language text exists in the dataset and it will need to be dealt with
+
+The twitter data is (as is to be expected) made up of purely short phrases, I expect this data will yield different results than the blog and news data which are much more context rich.
+
+I suspect it will be difficult for my model to deal with very common terms such as those contained in the top bi and trigrams. They will have many different possibilities to follow them. Longer, more complex words may be easier to predict based on the data, but I will worry about overfitting my models in those cases.
+
+4) Plans for prediction algorithm and shiny app
+I still have work to do in cleaning the data in order to make an efficient app. I need to
+
+Identify a more efficient method for tokenization
+Find a way to deal with foreign text in the data
+Build several very small training/test sets so that I can efficiently run models and test them on new data.
+As far as modeling, I will explore several avenues for predicting the next word when my app is given 1-4 words. I hope to have users enter 1-4 words on the left side of my GUI and on the right have 3 top suggested words automatically pop up, perhaps with the words showing larger if the model is more confident in them.
+
+Next Step
+I already finished the Task 0 to Task 3.
+
+The next step would be the prediction model and final shiny app. I hope my prediction model can predict more than one word base on what the user typed in. For example, if the user typed “Where”, then my app will show “are”, “do”, “is”; Also, I hope my prediction model can predict two words, for example, if the user typed “Where”, my app will show “are you”, “is he”. The second part may be challenging. I will start with the 4-gram, based on the last 3 words that the user typed to predict the fourth word, if there is no 4-gram sequence matched with my database, then look for 3-gram. If no 3-gram found, then look for 2-gram. But of course this logic needs to be changed based on the total number of words that the user has typed.
+
+I plan to generate another random sample from the news dataset to validate my prediction model. I choose the news dataset because it should contain the most proper English text.

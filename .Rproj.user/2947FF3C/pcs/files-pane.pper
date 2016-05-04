@@ -1,0 +1,9 @@
+{
+    "path" : "~/GitHub/project/capnlp/data",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}
